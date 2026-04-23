@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+.venv
+env/
+venv/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Data files (optional, uncomment if you don't want to upload your docs)
+# data/docs/*.pdf
+# data/docs/*.md
+data/faiss_index/
+data/chunks.json
+data/formatted/
+
+# Marker cache
+rag-service/.marker_cache/
+
+# Ollama models (should be installed locally)
+# These are large and shouldn't be uploaded

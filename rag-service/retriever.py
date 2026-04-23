@@ -20,8 +20,20 @@ class Retriever:
     
     def load_documents(self):
         """加载文档"""
-        # 实际项目中应该从文件或数据库加载
-        return ["Document 1", "Document 2", "Document 3"]
+        documents = []
+        doc_dir = "../data/docs"
+        
+        if os.path.exists(doc_dir):
+            for filename in os.listdir(doc_dir):
+                if filename.endswith((".txt", ".md")):
+                    try:
+                        with open(os.path.join(doc_dir, filename), "r", encoding="utf-8") as f:
+                            content = f.read()
+                            documents.append(content)
+                    except Exception as e:
+                        print(f"Error loading {filename}: {e}")
+        
+        return documents if documents else ["Document 1", "Document 2", "Document 3"]
     
     def retrieve(self, query, k=5):
         """检索相关文档"""

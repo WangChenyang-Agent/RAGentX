@@ -4,16 +4,25 @@ import time
 
 class CacheService:
     def __init__(self):
-        self.redis_client = redis.Redis(
-            host="localhost",
-            port=6379,
-            db=0,
-            decode_responses=True
-        )
+        try:
+            self.redis_client = redis.Redis(
+                host="localhost",
+                port=6379,
+                db=0,
+                decode_responses=True
+            )
+            self.redis_client.ping()
+            self.enabled = True
+        except Exception as e:
+            print(f"Redis not available, caching disabled: {e}")
+            self.enabled = False
+            self.redis_client = None
         self.ttl = 24 * 60 * 60  # 24小时
     
     def get(self, key):
         """从缓存获取数据"""
+        if not self.enabled:
+            return None
         try:
             cache_key = f"rag:query:{key}"
             data = self.redis_client.get(cache_key)
@@ -26,6 +35,8 @@ class CacheService:
     
     def set(self, key, value):
         """设置缓存数据"""
+        if not self.enabled:
+            return
         try:
             cache_key = f"rag:query:{key}"
             data = json.dumps(value, default=str)
@@ -35,6 +46,8 @@ class CacheService:
     
     def delete(self, key):
         """删除缓存数据"""
+        if not self.enabled:
+            return
         try:
             cache_key = f"rag:query:{key}"
             self.redis_client.delete(cache_key)

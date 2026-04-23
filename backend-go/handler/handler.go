@@ -2,12 +2,10 @@ package handler
 
 import (
 	"RAGentX/backend-go/middleware"
-	"bytes"
-	"encoding/json"
-	"fmt"
-	"github.com/gin-gonic/gin"
 	"net/http"
 	"time"
+
+	"github.com/gin-gonic/gin"
 )
 
 type Handler struct{}
@@ -50,7 +48,11 @@ func (h *Handler) Ask(c *gin.Context) {
 	}
 
 	// 存入Redis缓存
-	middleware.SetToCache(req.Query, resp)
+	middleware.SetToCache(req.Query, middleware.AskResponse{
+		Answer:  resp.Answer,
+		Sources: resp.Sources,
+		Time:    resp.Time,
+	})
 
 	c.JSON(http.StatusOK, resp)
 }

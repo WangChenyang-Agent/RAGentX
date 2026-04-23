@@ -1,13 +1,8 @@
-import os
-import requests
-from dotenv import load_dotenv
-
-load_dotenv()
+import ollama
 
 class Generator:
     def __init__(self):
-        self.api_key = os.getenv("OPENAI_API_KEY", "")
-        self.api_url = "https://api.openai.com/v1/chat/completions"
+        self.model = "deepseek-r1:1.5b"
     
     def generate(self, query, context):
         """生成回答"""
@@ -19,25 +14,15 @@ class Generator:
             for doc in context:
                 prompt += f"- {doc['document']}\n"
             
-            # 调用OpenAI API
-            headers = {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self.api_key}"
-            }
-            data = {
-                "model": "gpt-3.5-turbo",
-                "messages": [
-                    {"role": "system", "content": "You are a technical interview assistant."},
-                    {"role": "user", "content": prompt}
-                ],
-                "temperature": 0.7
-            }
-            
-            response = requests.post(self.api_url, headers=headers, json=data)
-            response.raise_for_status()
+            # 调用Ollama本地模型
+            response = ollama.generate(
+                model=self.model,
+                prompt=prompt,
+                options={"temperature": 0.7}
+            )
             
             # 解析结果
-            answer = response.json()["choices"][0]["message"]["content"]
+            answer = response["response"]
             return answer
         except Exception as e:
             print(f"Generate error: {e}")

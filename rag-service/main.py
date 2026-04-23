@@ -29,9 +29,10 @@ class AskResponse(BaseModel):
 @app.post("/api/ask", response_model=AskResponse)
 async def ask(request: AskRequest):
     try:
-        # 检查缓存
-        if cached := cache_service.get(request.query):
-            return cached
+        # 检查缓存（暂时禁用）
+        # cached = cache_service.get(request.query)
+        # if cached:
+        #     return AskResponse(**cached)
         
         # 使用Adaptive RAG处理
         answer, sources = adaptive_router.route(request.query)
@@ -43,8 +44,8 @@ async def ask(request: AskRequest):
             time="2026-04-23T14:00:00Z"
         )
         
-        # 存入缓存
-        cache_service.set(request.query, response)
+        # 存入缓存（暂时禁用）
+        # cache_service.set(request.query, response.model_dump())
         
         return response
     except Exception as e:

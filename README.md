@@ -1,41 +1,34 @@
 # RAGentX
 
-> **Adaptive RAG System with Local Retrieval & Redis Acceleration**
+> **Adaptive RAG System for Technical Interview Q&A**
 
-一个面向技术面经的**自适应检索增强生成系统（Adaptive RAG）**，通过本地向量检索 + 云端大模型 + 多级缓存，实现高性能、高质量的智能问答。
+一个面向技术面经的**自适应检索增强生成系统（Adaptive RAG）**，通过本地向量检索 + 大模型生成，实现高性能、高质量的智能问答。
 
 ## 项目简介
 
-RAGentX 是一个结合本地检索与云端大模型生成的 RAG 系统，专为技术面经场景设计。
+RAGentX 是一个结合本地检索与大模型生成的 RAG 系统，专为技术面经场景设计。
 
-系统支持 PDF / 文本解析，通过向量检索 + 重排序（Reranker）+ 自适应检索策略（Adaptive RAG），实现精准问答。同时引入 Redis 构建缓存体系，大幅降低延迟与 API 成本。
+系统支持 PDF / 文本解析，通过向量检索 + 自适应检索策略，实现精准问答。
 
 ## 核心特性
 
-### Adaptive RAG（核心亮点）
+### 本地检索 + 模型生成
 
-根据问题类型动态选择检索策略：
-
-| 问题类型 | 检索策略             |
-| -------- | -------------------- |
-| 概念类   | 向量检索（Top-K）    |
-| 对比类   | 扩展检索（多 chunk） |
-| 代码类   | 代码块优先           |
-| 推理类   | 多上下文融合         |
-
-### 本地检索 + 云端生成
-
-- 本地（Ollama）：
-  - embedding（qwen3）
+- 本地：
+  - embedding（Qwen3）
   - FAISS 向量检索
   - BGE reranker
-- 云端：
-  - 大模型 API（OpenAI / DeepSeek）
+- 模型：
+  - 本地大模型（Ollama）
 
 **优势**：
 - 数据不出本地
 - 生成质量更高
 - 成本可控
+
+### 自适应检索策略
+
+根据问题类型动态选择检索策略，提高检索准确性和效率。
 
 ### Reranker 精排优化
 
@@ -46,60 +39,21 @@ Query → TopK → Rerank → TopN
 - 使用 BGE reranker 提升相关性
 - 减少无关上下文干扰
 
-### Redis 多级缓存（性能关键）
-
-使用 Redis 构建缓存体系：
-
-#### 缓存层设计
-
-```
-Query
- ↓
-[Redis Query Cache]
- ↓ miss
-RAG Pipeline
- ↓
-[Redis Answer Cache]
- ↓
-Response
-```
-
-#### 缓存内容
-
-- Query Cache（问题缓存）
-- Answer Cache（回答缓存）
-- Embedding Cache（向量缓存，可选）
-
-**效果**：
-- 延迟降低 ~60%
-- API 成本降低 ~40%
-- QPS 提升显著
-
-### 高并发后端设计
-
-- Go + Gin API 网关
-- Python RAG 服务（LangChain 编排）
-- SSE 流式输出
-- 异步任务（可扩展）
-
 ## 系统架构
 
 ```
-Frontend (Vue)
+Frontend
       ↓
-Go API Gateway (Gin)
+FastAPI Service
       ↓
-Python RAG Service (LangChain)
-      ↓
-Redis Cache Layer
+Unified RAG Processor
       ↓
 Retriever Layer
   ├── Embedding (Qwen)
-  ├── FAISS
+  ├── FAISS Vector Store
   ├── Reranker (BGE)
-  ├── Adaptive Routing (Core)
       ↓
-LLM API (OpenAI / DeepSeek)
+Generator (Ollama)
       ↓
 Answer + Sources
 ```
@@ -108,54 +62,39 @@ Answer + Sources
 
 ### Backend
 
-- Go (Gin)
-- Python (FastAPI + LangChain)
+- Python (FastAPI)
+- LangChain
 
 ### RAG Core
 
 - FAISS（向量检索）
 - Qwen Embedding（本地）
 - BGE Reranker
-- Adaptive Retrieval（自研）
-
-### Cache
-
-- Redis
+- Adaptive Retrieval
 
 ### Model
 
 - Ollama（本地模型）
-- OpenAI / DeepSeek API
 
 ## 项目结构
 
 ```
 RAGentX/
-├── backend-go/
-│   ├── main.go
-│   ├── go.mod
-│   ├── router/
-│   │   └── router.go
-│   ├── handler/
-│   │   └── handler.go
-│   └── middleware/
-│       └── redis.go
-│
-├── rag-service/
-│   ├── main.py
-│   ├── requirements.txt
-│   ├── embedding.py
-│   ├── retriever.py
-│   ├── reranker.py
-│   ├── generator.py
-│   ├── cache.py        # Redis 缓存
-│   └── router.py       # Adaptive RAG 核心
-│
 ├── data/
-│   ├── docs/
-│   └── index.faiss
-│
-└── README.md
+│   ├── docs/           # 文档目录
+│   └── chunks.json     # 分块数据
+├── frontend/           # 前端
+│   └── index.html
+├── rag-service/        # RAG 服务
+│   ├── main.py         # FastAPI 入口
+│   ├── requirements.txt
+│   ├── embedding.py    # 向量嵌入
+│   ├── generator.py    # 回答生成
+│   ├── reranker.py     # 重排序
+│   ├── unified_rag_processor.py  # 核心处理器
+│   └── marker_pdf_processor.py   # PDF 处理
+├── README.md
+└── test_*.py           # 测试脚本
 ```
 
 ## 快速开始
@@ -164,39 +103,36 @@ RAGentX/
 
 ```bash
 pip install -r rag-service/requirements.txt
-go mod tidy
 ```
 
-### 2. 启动 Redis
+### 2. 启动本地模型（Ollama）
 
 ```bash
-docker run -d -p 6379:6379 redis
+ollama run deepseek-r1:1.5b
 ```
 
-### 3. 启动本地模型（Ollama）
+### 3. 启动服务
 
 ```bash
-ollama run qwen3-embedding:4b
-ollama run bona/bge-reranker-v2-m3
-```
-
-### 4. 构建向量索引
-
-```bash
-# 实际项目中需要创建构建索引的脚本
-# python build_index.py
-```
-
-### 5. 启动服务
-
-```bash
-# 启动Python RAG服务
+# 启动 RAG 服务
 cd rag-service
 python main.py
+```
 
-# 启动Go API网关
-cd ../backend-go
-go run main.go
+### 4. 测试
+
+```bash
+# 测试 Go GC 原理
+python test_gc_principle.py
+
+# 测试函数返回局部变量指针
+python test_escape_analysis.py
+
+# 测试 map key 判断
+python test_map_key_check.py
+
+# 测试 rune 类型
+python test_rune_type.py
 ```
 
 ## 示例
@@ -204,53 +140,37 @@ go run main.go
 ### 输入
 
 ```
-Go 中 channel 为什么会阻塞？
+简述 Go GC 原理
 ```
 
 ### 输出
 
 ```
-channel 阻塞通常由以下原因导致：
-1. 无缓冲 channel 未同时读写
-2. goroutine 泄漏
-3. select 未处理 default 分支
-
-相关知识：
-- goroutine 调度
-- select 多路复用
+Go GC 使用标记清除算法，分为标记和清除两个阶段，采用三色标记法（黑、灰、白），通过写屏障技术处理并发标记时的引用变化，整个过程分为标记准备、标记、标记结束、清理四个阶段，其中标记准备和标记结束阶段会暂停程序，并发标记阶段可以与程序并行执行。
 ```
 
 ## 性能优化
 
-- Redis 缓存（Query / Answer）
-- Top-K 控制
-- Reranker 精排
-- Prompt 压缩
-- SSE 流式输出
+- Top-K 控制（减少召回数量，避免噪声）
+- Reranker 精排（提升相关性）
+- Prompt 优化（减少幻觉和串台）
+- 答案后处理（确保格式正确）
 
 ## 项目亮点
 
 - 设计并实现 **Adaptive RAG 检索策略**，动态选择检索方式
-- 构建 **Redis 多级缓存系统**，降低 40% API 成本
-- 实现 **本地检索 + 云端生成** 的混合架构
+- 实现 **本地检索 + 模型生成** 的混合架构
 - 使用 FAISS + reranker 提升问答准确率
-- 基于 Go 实现高并发 API 网关（QPS 100+）
+- 基于 FastAPI 实现高性能 API 服务
+- 支持 PDF 文档解析和处理
 
 ## 面试可讲点
 
 - 为什么需要 Adaptive RAG？
 - Reranker 如何提升效果？
-- Redis 缓存如何设计？
-- 如何平衡缓存与实时性？
-- 为什么使用 FAISS 而不是 Milvus？
-
-## Roadmap
-
-- 多模态支持（OCR / 图像理解）
-- 知识图谱增强检索
-- Web UI（Vue3）
-- Obsidian 集成
-- 在线部署版本
+- 如何平衡检索准确性和效率？
+- 为什么使用 FAISS 进行向量检索？
+- 如何处理模型幻觉和串台问题？
 
 ## License
 

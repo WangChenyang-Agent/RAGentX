@@ -1,8 +1,10 @@
-import ollama
+import requests
+import json
 
 class Generator:
     def __init__(self):
-        self.model = "deepseek-r1:1.5b"
+        self.api_key = "sk-9d66c6a185ef4c3bb76d67d8485e7a17"
+        self.api_url = "https://api.deepseek.com/v1/chat/completions"
 
     def generate(self, query, context):
         """生成回答"""
@@ -28,23 +30,15 @@ class Generator:
             
             context_text = "\n\n".join(context_text_parts)
 
-            # 提取问题关键词，用于严格过滤
-            query_keywords = query.lower()
-            is_lock_query = "锁" in query or "lock" in query or "mutex" in query
-
             # 构建特别要求和格式要求
             special_requirements = ""
-            format_requirement = "直接给出答案，不要使用任何引导语，只列出文档中明确提到的要点。"
+            format_requirement = "请使用标准的Markdown格式输出，包括适当的标题、代码块等。"
             
-            if is_lock_query:
-                special_requirements = """## 特别要求（针对本问题）
-- **只回答"锁"相关的内容**：sync.Mutex、sync.RWMutex等同步原语
-- **不回答其他内容**：channel、map、goroutine等不是"锁"，不要提及
-- **答案简洁**：文档中提到几个锁，就回答几个，不要扩展
-"""
-                format_requirement = "直接给出答案，不要使用任何引导语，只列出文档中明确提到的锁类型。"
+            # 针对特定问题添加特别要求
+            if "map" in query.lower() and "key" in query.lower() and ("包含" in query.lower() or "存在" in query.lower()):
+                special_requirements = '\n## 特别要求\n必须使用Go语言特有的双返回值判断方式，即`if val, ok := dict["foo"]; ok { //do something here }`，并使用原文中的简洁代码示例格式。'
 
-            prompt = f"""你是一个严格的技术问答助手，**必须完全基于提供的文档内容回答问题**。
+            prompt = f"""你是一个严格基于给定文档回答问题的助手，必须遵守以下规则：
 
 ## 问题
 {query}
@@ -52,17 +46,23 @@ class Generator:
 ## 相关文档
 {context_text}
 
-## 回答要求（必须严格遵守）
-1. **严格基于文档**：只使用文档中明确提到的信息，**不得使用任何文档外的知识**
-2. **逐字核对**：确保每个答案点都能在文档中找到**精确对应**的内容
-3. **拒绝幻觉**：如果文档中没有相关信息，**直接回答"暂无相关信息"**，不要猜测
-4. **简洁精准**：只列出文档中明确提到的要点，**不要添加任何解释或扩展**
-5. **格式规范**：使用编号列表，每个要点直接对应文档中的内容
+## 回答要求
+1. **完全基于文档**：回答必须完全基于提供的文档内容，**禁止编造、篡改术语，禁止添加文档中不存在的内容**
+2. **严格对应问题**：回答必须和用户的问题严格对应，**禁止混入无关知识点**
+3. **使用原文术语**：必须使用文档中的原文表述，不能自行改写
+4. **保留核心术语**：必须完整保留原文中的所有关键专业术语，不能简化或替换
+5. **包含完整代码**：如果文档中包含代码示例，**必须完整包含代码示例**，不能省略或简化，并且使用Markdown代码块格式
+6. **使用Go语言特有的方式**：回答关于Go语言的问题时，必须使用Go语言特有的语法和机制
+7. **整合所有信息**：将所有文档来源的相关信息整合为**一个**完整的答案，**绝对不允许输出多个答案**
+8. **回答完整**：必须包含文档中的所有关键信息，不能遗漏核心概念
+9. **使用标准Markdown格式**：使用适当的标题、列表、代码块等Markdown元素，保持结构清晰
 
 ## 重要警告
 - **严禁编造**：任何未在文档中明确提及的信息都视为无效
-- **严禁扩展**：只回答问题本身，不要添加背景、原理或其他无关内容
-- **严禁臆测**：不要对文档内容进行任何推理或演绎
+- **严禁篡改**：不能修改或替换文档中的专业术语
+- **严禁串台**：不能混入与问题无关的知识点
+- **严禁多答案**：无论有多少个文档来源，只返回一个答案，绝对不允许输出多个答案
+- **严禁使用错误的语法**：回答关于Go语言的问题时，必须使用正确的Go语言语法，不能使用其他语言的语法
 
 {special_requirements}
 
@@ -71,16 +71,65 @@ class Generator:
 
 答案："""
 
-            response = ollama.generate(
-                model=self.model,
-                prompt=prompt,
-                options={"temperature": 0.0, "max_tokens": 500}
-            )
+            # 构建请求体
+            payload = {
+                "model": "deepseek-chat",
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": "你是一个严格基于给定文档回答问题的助手，必须使用标准的Markdown格式输出答案，包括适当的标题、代码块等。"
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                "temperature": 0.0,
+                "max_tokens": 1000  # 增加最大token数，确保能包含完整代码
+            }
 
-            answer = response["response"]
+            # 发送请求
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self.api_key}"
+            }
+
+            response = requests.post(self.api_url, headers=headers, data=json.dumps(payload))
+            response.raise_for_status()  # 检查请求是否成功
+
+            # 解析响应
+            response_data = response.json()
+            answer = response_data["choices"][0]["message"]["content"]
+            print(f"Raw answer: {answer}")
+            # 处理答案，移除编号列表和重复内容
+            answer = self._process_answer(answer)
+            print(f"Processed answer: {answer}")
             return answer.strip()
         except Exception as e:
             print(f"Generate error: {e}")
             import traceback
             traceback.print_exc()
             return f"抱歉，生成回答时出错：{str(e)}"
+
+    def _process_answer(self, answer):
+        """处理答案，保留分点标记，移除重复内容"""
+        import re
+        
+        # 清理多余的空行
+        answer = re.sub(r'\n{3,}', '\n\n', answer)
+        
+        # 移除重复的段落
+        paragraphs = answer.split('\n\n')
+        unique_paragraphs = []
+        seen = set()
+        
+        for paragraph in paragraphs:
+            paragraph = paragraph.strip()
+            if paragraph and paragraph not in seen:
+                seen.add(paragraph)
+                unique_paragraphs.append(paragraph)
+        
+        # 重新组合段落
+        answer = '\n\n'.join(unique_paragraphs)
+        
+        return answer

@@ -1,3 +1,11 @@
+# -*- coding: utf-8 -*-
+import sys
+import io
+
+# 设置默认编码为UTF-8，避免Windows下的GBK编码问题
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from fastapi.responses import FileResponse, HTMLResponse
@@ -57,12 +65,14 @@ async def startup_event():
             print("Creating UnifiedRAGProcessor instance...")
             unified_rag_processor = UnifiedRAGProcessor()
             print("Unified RAG Processor instance created!")
-            print("Loading existing index...")
-            # 手动加载索引，以便查看详细信息
+            print("Skipping document processing during startup...")
+            # 暂时禁用启动时的文档处理，加快启动速度
+            # results = unified_rag_processor.process_folder()
+            # print(f"Document processing completed! Created {len(unified_rag_processor.chunks)} chunks")
             if unified_rag_processor.vectorstore:
                 print(f"Vector index loaded successfully with {len(unified_rag_processor.chunks)} chunks")
             else:
-                print("No existing vector index found")
+                print("No existing vector index found. Please call /api/process-documents to build index.")
             print("Unified RAG Processor initialized!")
         except Exception as e:
             print(f"Failed to initialize Unified RAG Processor: {e}")
@@ -78,6 +88,11 @@ async def startup_event():
 @app.post("/api/ask", response_model=AskResponse)
 async def ask(request: AskRequest):
     try:
+        # 使用安全的方式打印日志，避免编码错误
+        try:
+            print(f"接收到请求: {request.query}")
+        except Exception:
+            print("接收到请求: [编码错误]")
         if not UNIFIED_RAG_AVAILABLE or not unified_rag_processor:
             raise HTTPException(status_code=503, detail="Unified RAG not available")
 
@@ -87,22 +102,41 @@ async def ask(request: AskRequest):
             mode=request.retrieval_mode
         )
 
+        def process_content(content):
+            """处理内容，确保字符编码正确"""
+            try:
+                return content.encode('utf-8', errors='replace').decode('utf-8')
+            except Exception:
+                return content
+        
         sources = []
         if result.get("sources"):
             for source in result["sources"]:
                 if isinstance(source, dict):
                     content = source.get("content", "")
+                    content = process_content(content)
                     sources.append(content[:200] + "..." if len(content) > 200 else content)
                 else:
-                    sources.append(str(source)[:200])
+                    content = process_content(str(source))
+                    sources.append(content[:200])
 
+        # 处理answer的字符编码
+        answer = result.get("answer", "")
+        answer = process_content(answer)
+        
+        # 使用安全的方式打印日志，避免编码错误
+        try:
+            print(f"返回回答: {answer}")
+        except Exception:
+            print("返回回答: [编码错误]")
         return AskResponse(
-            answer=result.get("answer", ""),
+            answer=answer,
             sources=sources,
             time="2026-04-23T14:00:00Z",
             mode="unified_rag"
         )
     except Exception as e:
+        print(f"处理请求时出错: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -136,7 +170,9 @@ async def process_documents():
         raise HTTPException(status_code=503, detail="Unified RAG not available")
 
     try:
+        print("Starting document processing...")
         results = unified_rag_processor.process_folder()
+        print("Document processing completed successfully")
 
         return {
             "status": "success",
@@ -144,6 +180,9 @@ async def process_documents():
             "statistics": unified_rag_processor.get_statistics()
         }
     except Exception as e:
+        print(f"Error processing documents: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -207,6 +246,5 @@ if __name__ == "__main__":
     print("=" * 60)
     print("Starting server on http://0.0.0.0:8000...")
     
-    # 直接使用uvicorn命令启动，而不是通过Python API
-    import subprocess
-    subprocess.run(["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"])
+    # 使用uvicorn直接启动
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

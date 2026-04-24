@@ -1082,8 +1082,8 @@
         function formatContent(content) {
             let formatted = escapeHtml(content);
 
-            // Code blocks
-            formatted = formatted.replace(/```(\w*)\n([\s\S]*?)```/g, (match, lang, code) => {
+            // 代码块 - 改进的正则表达式
+            formatted = formatted.replace(/```([\w]*)([\s\S]*?)```/g, (match, lang, code) => {
                 return `<div class="code-block">
                     <div class="code-header">
                         <span>${lang || 'code'}</span>
@@ -1092,28 +1092,38 @@
                 </div>`;
             });
 
-            // Inline code
+            // 行内代码
             formatted = formatted.replace(/`([^`]+)`/g, '<code>$1</code>');
 
-            // Headers
-            formatted = formatted.replace(/^### (.+)$/gm, '<h3>$1</h3>');
-            formatted = formatted.replace(/^## (.+)$/gm, '<h2>$1</h2>');
-            formatted = formatted.replace(/^# (.+)$/gm, '<h1>$1</h1>');
+            // 标题 - 增加更大的字体
+            formatted = formatted.replace(/^# (.+)$/gm, '<h1 style="font-size: 24px; font-weight: 700; margin: 24px 0 16px 0;">$1</h1>');
+            formatted = formatted.replace(/^## (.+)$/gm, '<h2 style="font-size: 22px; font-weight: 600; margin: 20px 0 14px 0;">$1</h2>');
+            formatted = formatted.replace(/^### (.+)$/gm, '<h3 style="font-size: 18px; font-weight: 600; margin: 16px 0 12px 0;">$1</h3>');
 
-            // Bold
+            // 粗体
             formatted = formatted.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
 
-            // Lists
-            formatted = formatted.replace(/^\- (.+)$/gm, '<li>$1</li>');
+            // 列表 - 改进的处理
+            // 无序列表
+            formatted = formatted.replace(/^(?:-|\*)\s+(.+)$/gm, '<li>$1</li>');
             formatted = formatted.replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>');
             formatted = formatted.replace(/<\/ul>\n?<ul>/g, '');
+            
+            // 有序列表
+            formatted = formatted.replace(/^\d+\.\s+(.+)$/gm, '<li>$1</li>');
+            formatted = formatted.replace(/(<li>.*<\/li>\n?)+/g, '<ol>$&</ol>');
+            formatted = formatted.replace(/<\/ol>\n?<ol>/g, '');
+            
+            // 修复可能的嵌套问题
+            formatted = formatted.replace(/<\/ul>\n?<ol>/g, '</ul><ol>');
+            formatted = formatted.replace(/<\/ol>\n?<ul>/g, '</ol><ul>');
 
-            // Paragraphs
+            // 段落
             formatted = formatted.split('\n\n').map(p => {
                 p = p.trim();
                 if (!p) return '';
                 if (p.startsWith('<') && !p.startsWith('<li>')) return p;
-                return `<p>${p}</p>`;
+                return `<p style="margin: 0 0 12px 0; line-height: 1.7;">${p}</p>`;
             }).join('');
 
             return formatted;

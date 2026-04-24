@@ -15,6 +15,7 @@ import os
 from embedding import EmbeddingService
 from reranker import Reranker
 from generator import Generator
+from redis_cache import clear_all_cache, is_redis_available
 
 app = FastAPI(title="RAGentX Service")
 
@@ -203,7 +204,18 @@ async def health_check():
     return {
         "status": "ok",
         "service": "RAGentX Service",
-        "unified_rag": "available" if UNIFIED_RAG_AVAILABLE else "unavailable"
+        "unified_rag": "available" if UNIFIED_RAG_AVAILABLE else "unavailable",
+        "redis": "available" if is_redis_available() else "unavailable"
+    }
+
+
+@app.post("/api/cache/clear")
+async def clear_cache():
+    """清除所有 RAG 查询缓存"""
+    count = clear_all_cache()
+    return {
+        "status": "success",
+        "message": f"Cleared {count} cache keys"
     }
 
 

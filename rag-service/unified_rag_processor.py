@@ -10,6 +10,13 @@ from langchain_community.retrievers import BM25Retriever
 
 from embedding import EmbeddingService
 from generator import Generator
+from redis_cache import (
+    get_redis_client,
+    generate_cache_key,
+    get_cached_result,
+    set_cached_result,
+    is_redis_available
+)
 
 try:
     from marker.converters.pdf import PdfConverter
@@ -1245,12 +1252,19 @@ class UnifiedRAGProcessor:
         question: str,
         top_k: int = 3,
         retrieval_mode: str = "hybrid",
-        similarity_threshold: float = 0.3  # 降低阈值以获取更多信息
+        similarity_threshold: float = 0.3
     ) -> Dict[str, Any]:
         """RAG查询"""
         print(f"\n{'='*60}")
         print(f"Query: {question}")
         print('='*60)
+
+        cache_key = generate_cache_key(question, retrieval_mode, top_k)
+        cached = get_cached_result(cache_key)
+        if cached:
+            print("Returning cached result")
+            cached["from_cache"] = True
+            return cached
 
         retrieved_docs = self.retrieve(question, top_k, retrieval_mode, similarity_threshold)
 
@@ -1259,24 +1273,25 @@ class UnifiedRAGProcessor:
             print(f"First doc type: {type(retrieved_docs[0])}, keys: {list(retrieved_docs[0].keys()) if isinstance(retrieved_docs[0], dict) else 'not dict'}")
 
         if not retrieved_docs:
-            return {
+            result = {
                 "question": question,
                 "answer": "I couldn't find relevant information to answer your question.",
                 "sources": []
             }
+            return result
 
         # 构建context
         try:
             context = []
             for doc in retrieved_docs:
                 if hasattr(doc, 'page_content'):
-                    content = self._process_content(doc.page_content)  # 处理字符编码
+                    content = self._process_content(doc.page_content)
                     context.append({"content": content})
                 elif isinstance(doc, dict) and "content" in doc:
-                    content = self._process_content(doc["content"])  # 处理字符编码
+                    content = self._process_content(doc["content"])
                     context.append({"content": content})
                 else:
-                    content = self._process_content(str(doc))  # 处理字符编码
+                    content = self._process_content(str(doc))
                     context.append({"content": content})
             print(f"Context built: {len(context)} items")
         except Exception as e:
@@ -1285,47 +1300,47 @@ class UnifiedRAGProcessor:
             for doc in retrieved_docs:
                 try:
                     if hasattr(doc, 'page_content'):
-                        content = self._process_content(doc.page_content)  # 处理字符编码
+                        content = self._process_content(doc.page_content)
                         context.append({"content": content})
                     elif isinstance(doc, dict) and "content" in doc:
-                        content = self._process_content(doc["content"])  # 处理字符编码
+                        content = self._process_content(doc["content"])
                         context.append({"content": content})
                     else:
-                        content = self._process_content(str(doc))  # 处理字符编码
+                        content = self._process_content(str(doc))
                         context.append({"content": content})
                 except Exception:
-                    # 如果处理失败，跳过该文档
                     pass
 
         answer = self.generator.generate(question, context)
 
-        # 提取sources为字符串数组
         sources = []
         for doc in retrieved_docs:
             try:
                 if hasattr(doc, 'page_content'):
-                    content = self._process_content(doc.page_content)  # 处理字符编码
+                    content = self._process_content(doc.page_content)
                     sources.append(content)
                 elif isinstance(doc, dict) and "content" in doc:
-                    content = self._process_content(doc["content"])  # 处理字符编码
+                    content = self._process_content(doc["content"])
                     sources.append(content)
                 else:
-                    content = self._process_content(str(doc))  # 处理字符编码
+                    content = self._process_content(str(doc))
                     sources.append(content)
             except Exception:
-                # 如果处理失败，尝试使用原始字符串
                 try:
                     sources.append(str(doc))
                 except Exception:
-                    # 如果仍然失败，跳过该文档
                     pass
 
-        return {
+        result = {
             "question": question,
             "answer": answer,
             "sources": sources,
             "retrieval_mode": retrieval_mode
         }
+
+        set_cached_result(cache_key, result)
+
+        return result
 
     def query_with_multimodal(
         self,

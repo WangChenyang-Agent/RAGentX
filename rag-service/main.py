@@ -25,7 +25,7 @@ except ImportError as e:
 class AskRequest(BaseModel):
     query: str
     use_unified_rag: bool = True
-    top_k: int = 5
+    top_k: int = 3
     retrieval_mode: str = "hybrid"
 
 

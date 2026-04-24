@@ -1,9 +1,14 @@
 import requests
 import json
+import os
+from dotenv import load_dotenv
+
+# 加载环境变量
+load_dotenv()
 
 class Generator:
     def __init__(self):
-        self.api_key = "sk-9d66c6a185ef4c3bb76d67d8485e7a17"
+        self.api_key = os.getenv("API_KEY", "")
         self.api_url = "https://api.deepseek.com/v1/chat/completions"
 
     def generate(self, query, context):

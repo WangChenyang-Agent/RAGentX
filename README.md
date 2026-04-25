@@ -99,46 +99,41 @@ Data Pipeline (pipeline/)
 ## 项目结构
 
 ```
-RAGentX/
-├── data/
-│   ├── raw/            # 原始数据（docs）
-│   ├── processed/      # 清洗后数据
-│   └── index/          # 向量索引
-│
-├── pipeline/           # 数据处理管道
-│   ├── pdf_parser.py
-│   ├── markdown_parser.py
-│   ├── qa_converter.py
-│   ├── chunker.py
-│   └── build_index.py
-│
-├── rag-service/        # 在线服务
-│   ├── api/
-│   │   └── main.py     # FastAPI入口
-│   │
-│   ├── core/
-│   │   ├── embedding.py
-│   │   ├── generator.py
-│   │   ├── reranker.py
-│   │   └── unified_rag_processor.py
-│   │
-│   ├── cache/
-│   │   └── redis_cache.py
-│   │
-│   ├── agent/          # 为未来准备
-│   │   ├── router.py
-│   │   └── tools.py
-│   │
-│   └── config/
-│       └── settings.py
-│
-├── frontend/
-│   └── index.html
-│
-├── scripts/            # 工具脚本
-│   └── ingest_data.py
-│
-└── README.md
+RAGentX/                     # 项目根目录
+├── data/                    # 数据目录
+│   ├── raw/                 # 原始数据（文档）
+│   │   └── *.pdf            # 原始 PDF 文档
+│   ├── processed/           # 处理后数据
+│   │   └── *.md/*.json      # 转换后的 Markdown 和 JSON 数据
+│   └── index/               # 向量索引
+│       └── faiss_index/     # FAISS 向量存储
+├── pipeline/                # 数据处理管道（离线 ETL）
+│   ├── pdf_parser.py        # PDF 文档解析器
+│   ├── markdown_parser.py   # Markdown 文档解析器
+│   ├── qa_converter.py      # 问答对转换器
+│   ├── chunker.py           # 文本分块器
+│   └── build_index.py       # 向量索引构建器
+├── rag-service/             # 在线服务
+│   ├── api/                 # API 层
+│   │   └── main.py          # FastAPI 入口文件
+│   ├── core/                # 核心逻辑层
+│   │   ├── embedding.py     # 向量嵌入服务
+│   │   ├── generator.py     # 回答生成器
+│   │   ├── reranker.py      # 重排序器
+│   │   └── unified_rag_processor.py  # 统一 RAG 处理器
+│   ├── cache/               # 缓存层
+│   │   └── redis_cache.py   # Redis 缓存实现
+│   ├── agent/               # Agent 层（未来扩展）
+│   │   ├── router.py        # 任务路由器
+│   │   └── tools.py         # 工具集
+│   └── config/              # 配置层
+│       └── settings.py      # 系统配置
+├── frontend/                # 前端界面
+│   └── index.html           # 前端页面
+├── scripts/                 # 工具脚本
+│   └── ingest_data.py       # 数据导入脚本
+├── .gitignore               # Git 忽略文件
+└── README.md                # 项目说明文件
 ```
 
 ## 快速开始

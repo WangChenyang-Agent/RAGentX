@@ -1,6 +1,16 @@
 # -*- coding: utf-8 -*-
 import sys
 import io
+import os
+
+# 添加项目根目录到Python路径
+current_dir = os.path.dirname(__file__)
+rag_service_dir = os.path.dirname(current_dir)
+project_root = os.path.dirname(rag_service_dir)
+sys.path.insert(0, project_root)
+sys.path.insert(0, rag_service_dir)
+print(f"Added to Python path: {project_root}")
+print(f"Added to Python path: {rag_service_dir}")
 
 # 设置默认编码为UTF-8，避免Windows下的GBK编码问题
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
@@ -12,50 +22,20 @@ from fastapi.responses import FileResponse, HTMLResponse
 import uvicorn
 import os
 
-from embedding import EmbeddingService
-from reranker import Reranker
-from generator import Generator
-from redis_cache import clear_all_cache, is_redis_available
+from core.embedding import EmbeddingService
+from core.reranker import Reranker
+from core.generator import Generator
+from cache.redis_cache import clear_all_cache, is_redis_available
 
-app = FastAPI(title="RAGentX Service")
-
-FRONTEND_DIR = os.path.join(os.path.dirname(__file__), "..", "frontend")
-
-unified_rag_processor = None
-
-try:
-    from unified_rag_processor import UnifiedRAGProcessor
-    UNIFIED_RAG_AVAILABLE = True
-except ImportError as e:
-    print(f"Unified RAG not available: {e}")
-    UNIFIED_RAG_AVAILABLE = False
+from contextlib import asynccontextmanager
 
 
-class AskRequest(BaseModel):
-    query: str
-    use_unified_rag: bool = True
-    top_k: int = 3
-    retrieval_mode: str = "hybrid"
-
-
-class AskResponse(BaseModel):
-    answer: str
-    sources: list
-    time: str
-    mode: str = "unified_rag"
-
-
-class MultimodalQueryRequest(BaseModel):
-    query: str
-    multimodal_content: list = []
-    mode: str = "hybrid"
-
-
-@app.on_event("startup")
-async def startup_event():
-    """启动时初始化"""
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """生命周期管理"""
     global unified_rag_processor
-
+    
+    # 启动时
     print("Starting RAGentX Service...")
     print(f"UNIFIED_RAG_AVAILABLE: {UNIFIED_RAG_AVAILABLE}")
 
@@ -84,6 +64,55 @@ async def startup_event():
         print("Unified RAG not available, skipping initialization")
     
     print("RAGentX Service startup completed!")
+    
+    yield
+    
+    # 关闭时
+    print("Shutting down RAGentX Service...")
+    if unified_rag_processor:
+        print("Cleaning up Unified RAG Processor...")
+        # 这里可以添加清理代码
+    print("RAGentX Service shutdown completed!")
+
+
+# 计算前端目录路径
+current_dir = os.path.dirname(__file__)
+rag_service_dir = os.path.dirname(current_dir)
+project_root = os.path.dirname(rag_service_dir)
+FRONTEND_DIR = os.path.join(project_root, "frontend")
+print(f"Frontend directory: {FRONTEND_DIR}")
+print(f"Frontend directory exists: {os.path.exists(FRONTEND_DIR)}")
+
+unified_rag_processor = None
+
+try:
+    from core.unified_rag_processor import UnifiedRAGProcessor
+    UNIFIED_RAG_AVAILABLE = True
+except ImportError as e:
+    print(f"Unified RAG not available: {e}")
+    UNIFIED_RAG_AVAILABLE = False
+
+app = FastAPI(title="RAGentX Service", lifespan=lifespan)
+
+
+class AskRequest(BaseModel):
+    query: str
+    use_unified_rag: bool = True
+    top_k: int = 3
+    retrieval_mode: str = "hybrid"
+
+
+class AskResponse(BaseModel):
+    answer: str
+    sources: list
+    time: str
+    mode: str = "unified_rag"
+
+
+class MultimodalQueryRequest(BaseModel):
+    query: str
+    multimodal_content: list = []
+    mode: str = "hybrid"
 
 
 @app.post("/api/ask", response_model=AskResponse)
@@ -232,8 +261,13 @@ async def health_check_compat():
 @app.get("/")
 async def root():
     index_path = os.path.join(FRONTEND_DIR, "index.html")
+    print(f"Root path requested")
+    print(f"Index path: {index_path}")
+    print(f"Index path exists: {os.path.exists(index_path)}")
     if os.path.exists(index_path):
+        print(f"Returning FileResponse for: {index_path}")
         return FileResponse(index_path)
+    print("Frontend not found, returning HTML response")
     return HTMLResponse("<h1>RAGentX Service</h1><p>Frontend not found.</p>")
 
 
@@ -258,5 +292,5 @@ if __name__ == "__main__":
     print("=" * 60)
     print("Starting server on http://0.0.0.0:8000...")
     
-    # 使用uvicorn直接启动
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    # 使用uvicorn直接启动，使用正确的模块路径
+    uvicorn.run("api.main:app", host="0.0.0.0", port=8000, reload=True, cwd=os.path.dirname(os.path.dirname(__file__)))

@@ -1,16 +1,20 @@
 import os
+import sys
 import json
 import asyncio
 import re
+
+# 添加项目根目录到Python路径
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from typing import List, Dict, Optional, Any, Callable
 from langchain_core.documents import Document
 from langchain_text_splitters import MarkdownHeaderTextSplitter, RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain_community.retrievers import BM25Retriever
 
-from embedding import EmbeddingService
-from generator import Generator
-from redis_cache import (
+from core.embedding import EmbeddingService
+from core.generator import Generator
+from cache.redis_cache import (
     get_redis_client,
     generate_cache_key,
     get_cached_result,
@@ -59,11 +63,11 @@ class UnifiedRAGProcessor:
         chunk_overlap: int = 200  # 增大重叠部分
     ):
         if docs_dir is None:
-            docs_dir = os.path.join(project_root, "..", "data", "docs")
+            docs_dir = os.path.join(project_root, "..", "..", "data", "raw")
         if output_dir is None:
-            output_dir = os.path.join(project_root, "..", "data", "formatted")
+            output_dir = os.path.join(project_root, "..", "..", "data", "processed")
         if index_dir is None:
-            index_dir = os.path.join(project_root, "..", "data")
+            index_dir = os.path.join(project_root, "..", "..", "data", "index")
 
         self.docs_dir = docs_dir
         self.output_dir = output_dir
@@ -1057,16 +1061,39 @@ class UnifiedRAGProcessor:
             '逃逸分析': ['逃逸分析', 'escape analysis', '局部变量', '指针'],
             'csp': ['csp', '并发模型', 'communicating sequential processes'],
             'gpm': ['gpm', '调度模型', 'goroutine', 'processor', 'machine'],
+            # 新增技术术语
+            'deadline': ['deadline', '截止时间', '超时', 'context', 'ctx'],
+            '缓存': ['缓存', 'cache', '缓存雪崩', '缓存穿透', '缓存击穿'],
+            '雪崩': ['缓存雪崩', '雪崩', 'cache avalanche'],
+            'b树': ['b树', 'b-树', 'b+树', 'b tree', 'b+ tree', '索引', 'index'],
+            'b+树': ['b+树', 'b+ tree', 'b树', '索引', 'index'],
+            '索引': ['索引', 'index', 'b树', 'b+树', '数据库', 'database'],
         }
         
         # 提取查询中的关键词
         matched_keywords = []
+        
+        # 1. 首先提取查询中的所有词语作为关键词
+        query_terms = query.lower().split()
+        matched_keywords.extend([term for term in query_terms if len(term) > 1])
+        
+        # 2. 技术术语映射匹配
         for keyword, related_terms in keyword_mappings.items():
-            # 检查查询中是否包含任何相关术语
             for term in related_terms:
-                if term in query_lower:
+                if term.lower() in query_lower:
                     matched_keywords.extend(related_terms)
                     break
+        
+        # 3. 额外提取技术术语
+        import re
+        technical_terms = re.findall(r'[a-zA-Z0-9_+#-]+', query)
+        matched_keywords.extend([term for term in technical_terms if len(term) > 1])
+        
+        # 4. 手动添加常见技术术语
+        common_terms = ['事务', 'acid', '隔离级别', '脏读', '幻读', 'mvcc', '锁', '索引', '设计', '原则', '注意事项', 'deadline', '缓存', '雪崩', 'b树', 'b+树']
+        for term in common_terms:
+            if term.lower() in query_lower and term not in matched_keywords:
+                matched_keywords.append(term)
         
         matched_keywords = list(set(matched_keywords))  # 去重
         print(f"Matched keywords: {matched_keywords}")
@@ -1093,20 +1120,8 @@ class UnifiedRAGProcessor:
                 if content_hash not in seen_content:
                     seen_content.add(content_hash)
                     # 检查是否包含关键词
-                    has_keyword = any(kw in content for kw in matched_keywords) if matched_keywords else False
-                    # 调试：打印关键词匹配情况
-                    if '什么是协程' in content or 'Goroutine 是' in content:
-                        print(f"Debug: Checking keywords for coroutine definition:")
-                        print(f"Debug: Content: {content[:100]}...")
-                        print(f"Debug: Matched keywords: {matched_keywords}")
-                        print(f"Debug: Has keyword: {has_keyword}")
-                        for kw in matched_keywords:
-                            print(f"Debug: Keyword '{kw}' in content: {kw in content}")
+                    has_keyword = any(kw.lower() in content.lower() for kw in matched_keywords) if matched_keywords else False
                     all_docs.append((doc, score, has_keyword))
-                    # 调试：打印文档内容和得分
-                    if '什么是协程' in content or 'Goroutine 是' in content:
-                        print(f"Debug: Found coroutine definition - Score: {score}, Has keyword: {has_keyword}")
-                        print(f"Debug: Content: {content[:100]}...")
             
             # 优先返回包含关键词的文档
             keyword_docs = []
@@ -1114,32 +1129,19 @@ class UnifiedRAGProcessor:
             
             for doc, score, has_keyword in all_docs:
                 content = doc.page_content if hasattr(doc, 'page_content') else str(doc)
-                
-                # 调试：打印文档处理情况
-                if '什么是协程' in content or 'Goroutine 是' in content:
-                    print(f"Debug: Processing coroutine definition doc:")
-                    print(f"Debug: Content: {content[:100]}...")
-                    print(f"Debug: Has keyword: {has_keyword}")
-                    print(f"Debug: Query contains definition terms: {any(term in query for term in ['什么是', '定义', '概念', '含义'])}")
-                    print(f"Debug: Content contains '泄露' or '问题': {'泄露' in content or '问题' in content}")
-                    print(f"Debug: Content contains definition terms: {any(def_term in content for def_term in ['是指', '定义', '概念', '含义', '解释', '是 ', '是与', '可以被认为', '可以被认为是', '可以认为', '是与其他', '是 与其他']) or '什么是协程' in content or 'Goroutine 是' in content}")
+                content_lower = content.lower()
                 
                 # 智能排序：根据内容相关性和查询意图
                 if has_keyword:
                     # 对于定义类查询，优先返回包含定义的内容
                     if any(term in query for term in ['什么是', '定义', '概念', '含义']):
                         # 优先匹配包含核心概念但不包含负面/问题场景的内容
-                        # 检查内容中是否包含负面词汇，而不是标题中的"问题"关键词
-                        content_lower = content.lower()
                         if '泄露' not in content_lower and not ( '问题' in content_lower and '场景' in content_lower):
                             # 检查是否包含定义相关词汇
-                            if any(def_term in content for def_term in ['是指', '定义', '概念', '含义', '解释', '是 ', '是与', '可以被认为', '可以被认为是', '可以认为', '是与其他', '是 与其他']) or '什么是协程' in content or 'Goroutine 是' in content:
+                            if any(def_term in content for def_term in ['是指', '定义', '概念', '含义', '解释', '是 ', '是与', '可以被认为', '可以被认为是', '可以认为', '是与其他', '是 与其他']) or '什么是' in content or '是' in content.split('\n')[0]:
                                 # 大幅降低得分，使其排前面（向量相似度得分越低越相似）
                                 adjusted_score = score * 0.1  # 进一步降低得分，确保排前面
                                 keyword_docs.append((doc, adjusted_score))
-                                # 调试：打印调整后的得分
-                                if '什么是协程' in content or 'Goroutine 是' in content:
-                                    print(f"Debug: Coroutine definition adjusted score: {adjusted_score}")
                             else:
                                 # 适度降低得分
                                 adjusted_score = score * 0.7
@@ -1148,31 +1150,39 @@ class UnifiedRAGProcessor:
                             keyword_docs.append((doc, score))
                     else:
                         keyword_docs.append((doc, score))
-                elif score >= similarity_threshold:
-                    other_docs.append((doc, score))
+                else:
+                    # 改进相关性判断：不仅检查单个词，还要检查整体相关性
+                    query_terms = [term for term in query_lower.split() if len(term) > 1]
+                    if query_terms:
+                        # 计算查询词在文档中的出现比例
+                        term_count = sum(1 for term in query_terms if term in content_lower)
+                        relevance_ratio = term_count / len(query_terms)
+                        # 如果相关性比例大于0.2，认为是相关文档
+                        if relevance_ratio >= 0.2:
+                            other_docs.append((doc, score))
+                    elif score < 0.9:  # 对于短查询，使用更宽松的阈值
+                        other_docs.append((doc, score))
             
             # 特殊处理：如果没有关键词匹配，但有与查询相关的低分文档，优先保留这些文档
-            if not keyword_docs:
+            if not keyword_docs and not other_docs:
                 # 从all_docs中筛选出可能与查询相关的文档
                 query_terms = query.lower().split()
                 print(f"Query terms: {query_terms}")
                 relevant_docs = []
-                irrelevant_docs = []
                 
                 for doc, score, hk in all_docs:
                     content = doc.page_content if hasattr(doc, 'page_content') else str(doc)
                     content_lower = content.lower()
-                    # 检查文档内容是否包含查询中的关键词
-                    has_relevant_terms = any(term in content_lower for term in query_terms if len(term) > 1)
-                    print(f"Checking doc: score={score:.4f}, has_relevant_terms={has_relevant_terms}")
-                    print(f"Doc content: {content[:50]}...")
-                    if has_relevant_terms:
+                    # 改进的相关性判断
+                    if query_terms:
+                        term_count = sum(1 for term in query_terms if term in content_lower)
+                        relevance_ratio = term_count / len(query_terms)
+                        if relevance_ratio >= 0.1:  # 更宽松的阈值
+                            relevant_docs.append((doc, score))
+                    elif score < 0.95:  # 对于非常短的查询，使用更宽松的阈值
                         relevant_docs.append((doc, score))
-                    else:
-                        irrelevant_docs.append((doc, score))
                 
                 print(f"Relevant docs found: {len(relevant_docs)}")
-                print(f"Irrelevant docs found: {len(irrelevant_docs)}")
                 
                 # 如果有相关文档，优先使用相关文档
                 if relevant_docs:
@@ -1180,8 +1190,8 @@ class UnifiedRAGProcessor:
                     relevant_docs.sort(key=lambda x: x[1])
                     other_docs = relevant_docs[:top_k]
                     print(f"Using relevant docs: {len(other_docs)}")
-                elif not other_docs and all_docs:
-                    # 如果没有相关文档且other_docs为空，按分数排序取前top_k个
+                elif all_docs:
+                    # 如果没有相关文档，按分数排序取前top_k个
                     sorted_docs = sorted(all_docs, key=lambda x: x[1])
                     other_docs = [(d, s) for d, s, hk in sorted_docs[:top_k]]
                     print(f"Using sorted docs: {len(other_docs)}")
@@ -1198,18 +1208,29 @@ class UnifiedRAGProcessor:
             # 对other_docs按得分排序
             other_docs.sort(key=lambda x: x[1])
             
-            # 调试：打印keyword_docs的前5个结果
-            print(f"Debug: Top 5 keyword_docs:")
-            for i, (doc, score) in enumerate(keyword_docs[:5]):
+            # 合并结果，确保总数量不超过top_k
+            merged_docs = []
+            seen_content = set()
+            
+            # 优先添加关键词文档
+            for doc, score in keyword_docs:
                 content = doc.page_content if hasattr(doc, 'page_content') else str(doc)
-                print(f"  Debug: {i+1}. Score: {score:.4f}, Content: {content[:50]}...")
+                content_hash = hash(content[:200])
+                if content_hash not in seen_content and len(merged_docs) < top_k:
+                    seen_content.add(content_hash)
+                    merged_docs.append(doc)
             
-            # 合并并取前top_k个
-            combined_docs = keyword_docs + other_docs
-            docs = [doc for doc, _ in combined_docs[:top_k]]
+            # 然后添加其他相关文档
+            for doc, score in other_docs:
+                content = doc.page_content if hasattr(doc, 'page_content') else str(doc)
+                content_hash = hash(content[:200])
+                if content_hash not in seen_content and len(merged_docs) < top_k:
+                    seen_content.add(content_hash)
+                    merged_docs.append(doc)
             
-            print(f"Vector search: {len(keyword_docs)} keyword-matched, {len(other_docs)} other docs")
-            
+            print(f"Final merged docs: {len(merged_docs)}")
+            return merged_docs
+
         elif mode == "keyword":
             # 简单的关键词匹配检索
             query_keywords = [k for k in matched_keywords if len(k) > 1]  # 使用已提取的关键词

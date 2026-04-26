@@ -1,0 +1,23 @@
+{
+  "source": "Go语言笔试面试题汇总3-并发编程.pdf",
+  "processed_at": "2026-04-26 09:47:21",
+  "content": {
+    "sections": [
+      {
+        "type": "qa",
+        "question": "无缓冲的 channel 和 有缓冲的 channel 的区别？",
+        "answer": "【答案】\n对于无缓冲的 channel ，发送方将阻塞该信道，直到接收方从该信道接收到数据为\n止，而接收方也将阻塞该信道，直到发送方将数据发送到该信道中为止。 \n对于有缓存的 channel ，发送方在没有空插槽（缓冲区使用完）的情况下阻塞，而\n接收方在信道为空的情况下阻塞。 \n例如: \nfunc main() { \n st := time.Now() \n ch := make(chan bool) \n go func () { \n time.Sleep(time.Second * 2) \n <-ch \n }() \n ch <- true // 无缓冲，发送方阻塞直到接收方接收到数据。 \n fmt.Printf( \"cost %.1f s\\n\", time.Now().Sub(st).Seconds()) \n\n time.Sleep(time.Second * 5) \n} \nfunc main() { \n st := time.Now() \n ch := make(chan bool, 2) \n go func () { \n time.Sleep(time.Second * 2) \n <-ch \n }() \n ch <- true \n ch <- true // 缓冲区为 2，发送方不阻塞，继续往下执行 \n fmt.Printf( \"cost %.1f s \\n\", time.Now().Sub(st).Seconds()) // cost 0.\n0 s \n ch <- true // 缓冲区使用完，发送方阻塞， 2s 后接收方接收到数据，释放一个\n插槽，继续往下执行 \n fmt.Printf( \"cost %.1f s \\n\", time.Now().Sub(st).Seconds()) // cost 2.\n0 s \n time.Sleep(time.Se cond * 5) \n}\n\n【标签】\n并发"
+      },
+      {
+        "type": "qa",
+        "question": "什么是协程泄露 (Goroutine Leak) ？",
+        "answer": "【答案】\n协程泄露是指协程创建后，长时间得不到释放，并且还在不断地创建新的协程，最\n终导致内存耗尽，程序崩溃。常见的导致协程泄露的场景有以下几种： \n• 缺少接收器，导致发送阻塞 \n这个例子中，每执行一次 query，则启动 1000个协程向信道 ch 发送数字 0 ，但只\n接收了一次，导致 999 个协程被阻塞，不能退出。 \nfunc query() int { \n ch := make(chan int) \n for i := 0; i < 1000; i++ { \n go func() { ch < - 0 }() \n } \n return <-ch \n} \n \nfunc main() { \n for i := 0; i < 4; i++ { \n query() \n fmt.Printf( \"goroutines: %d \\n\", runtime.NumGoroutine()) \n } \n} \n// goroutines: 1001 \n// goroutines: 2000 \n\n// goroutin es: 2999 \n// goroutines: 3998 \n• 缺少发送器，导致接收阻塞 \n那同样的，如果启动 1000 个协程接收信道的信息，但信道并不会发送那么多次的\n信息，也会导致接收协程被阻塞，不能退出。 \n• 死锁(dead lock) \n两个或两个以上的协程在执行过程中，由于竞争资源或者由于彼此通信而造成阻塞，\n这种情况下，也会导致协程被阻塞，不能退出。 \n• 无限循环(infinite loops) \n这个例子中，为了避免网络等问题，采用了无限重试的方式，发送 HTTP 请求，直\n到获取到数据。那如果 HTTP 服务宕机，永远不可达，导致协程不能退出，发生泄\n漏。 \nfunc request(url string, wg *sync.WaitGroup) { \n i := 0 \n for { \n if _, err := http.Get(url); err == nil { \n // write to db \n break \n } \n i++ \n if i >= 3 { \n break \n } \n time.Sleep(time.Second) \n } \n wg.Done() \n} \n \nfunc main() { \n var wg sync.WaitGroup \n for i := 0; i < 1000; i++ { \n wg.Add(1) \n go request(fmt.Sprintf( \"https://127.0.0.1:8080/%d\" , i), &wg) \n } \n wg.Wait() \n}\n\n【标签】\nGolang / 并发 / 基础"
+      },
+      {
+        "type": "qa",
+        "question": "Go 可以限制运行时操作系统线程的数量吗？",
+        "answer": "【答案】\nThe GOMAXPROCS variable limits the number of operating system threads that can execute user -level Go \ncode simultaneously. There is no limit to the number of threads that can be blocked in system calls on \nbehalf of Go code; those do not count against the GOMAXPROCS limit. \n\n可以使用环境变量 GOMAXPROCS 或 runtime.GOMAXPROCS(num int) 设置，例如： \nruntime.GOMAXPROCS( 1) // 限制同时执行 Go代码的操作系统线程数为 1 \n从官方文档的解释可以看到， GOMAXPROCS 限制的是同时执行用户态 Go 代码的操作\n系统线程的数量，但是对于被系统调用阻塞的线程数量是没有限制的。\nGOMAXPROCS 的默认值等于 CPU 的逻辑核数，同一时间，一个核只能绑定一个线程，\n然后运行被调度的协程。因此对于 CPU 密集型的任务，若该值过大，例如设置为 \nCPU 逻辑核数的 2 倍，会增加线程切换的开销，降低性能。对于 I/O 密集型应用，\n适当地调大该值，可以提高 I/O 吞吐率。\n\n【标签】\nGolang / 操作系统"
+      }
+    ]
+  }
+}

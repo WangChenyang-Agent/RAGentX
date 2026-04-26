@@ -76,7 +76,7 @@ class Generator:
 
             # 发送请求
             response = self.client.chat.completions.create(
-                model="deepseek-v4-pro",
+                model="deepseek-v4-flash",
                 messages=[
                     {"role": "system", "content": "你是一个严格基于给定文档回答问题的助手，必须使用标准的Markdown格式输出答案，包括适当的标题、代码块等。"},
                     {"role": "user", "content": prompt}

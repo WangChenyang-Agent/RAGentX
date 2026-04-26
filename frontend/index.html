@@ -989,7 +989,8 @@
         </div>
     </main>
 
-    <script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+        <script>
         const API_BASE = 'http://localhost:8000/api';
         let isServiceRunning = false;
         let currentReferences = [];
@@ -1274,10 +1275,11 @@
         }
 
         function formatContent(content) {
-            let formatted = escapeHtml(content);
-
-            // 代码块 - 改进的正则表达式
-            formatted = formatted.replace(/```([\w]*)([\s\S]*?)```/g, (match, lang, code) => {
+            // 使用marked.js渲染Markdown，启用安全选项防止XSS攻击
+            let formatted = marked.parse(content, { sanitize: true });
+            
+            // 为代码块添加复制按钮
+            formatted = formatted.replace(/<pre><code class="language-(\w+)">([\s\S]*?)<\/code><\/pre>/g, (match, lang, code) => {
                 const codeId = 'code-' + Math.random().toString(36).substr(2, 9);
                 return `<div class="code-block">
                     <div class="code-header">
@@ -1290,44 +1292,15 @@
                             复制
                         </button>
                     </div>
-                    <pre><code id="${codeId}">${code.trim()}</code></pre>
+                    <pre><code id="${codeId}" class="language-${lang}">${code}</code></pre>
                 </div>`;
             });
-
-            // 行内代码
-            formatted = formatted.replace(/`([^`]+)`/g, '<code>$1</code>');
-
-            // 标题 - 增加更大的字体
-            formatted = formatted.replace(/^# (.+)$/gm, '<h1 style="font-size: 24px; font-weight: 700; margin: 24px 0 16px 0;">$1</h1>');
-            formatted = formatted.replace(/^## (.+)$/gm, '<h2 style="font-size: 22px; font-weight: 600; margin: 20px 0 14px 0;">$1</h2>');
-            formatted = formatted.replace(/^### (.+)$/gm, '<h3 style="font-size: 18px; font-weight: 600; margin: 16px 0 12px 0;">$1</h3>');
-
-            // 粗体
-            formatted = formatted.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-
-            // 列表 - 改进的处理
-            // 无序列表
-            formatted = formatted.replace(/^(?:-|\*)\s+(.+)$/gm, '<li>$1</li>');
-            formatted = formatted.replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>');
-            formatted = formatted.replace(/<\/ul>\n?<ul>/g, '');
             
-            // 有序列表
-            formatted = formatted.replace(/^\d+\.\s+(.+)$/gm, '<li>$1</li>');
-            formatted = formatted.replace(/(<li>.*<\/li>\n?)+/g, '<ol>$&</ol>');
-            formatted = formatted.replace(/<\/ol>\n?<ol>/g, '');
+            // 为表格添加样式
+            formatted = formatted.replace(/<table>/g, '<table style="border-collapse: collapse; width: 100%; margin: 16px 0; font-size: 14px;">');
+            formatted = formatted.replace(/<th>/g, '<th style="border: 1px solid #e5e5e5; padding: 8px 12px; text-align: left; font-weight: 600; background-color: #f7f7f8;">');
+            formatted = formatted.replace(/<td>/g, '<td style="border: 1px solid #e5e5e5; padding: 8px 12px;">');
             
-            // 修复可能的嵌套问题
-            formatted = formatted.replace(/<\/ul>\n?<ol>/g, '</ul><ol>');
-            formatted = formatted.replace(/<\/ol>\n?<ul>/g, '</ol><ul>');
-
-            // 段落
-            formatted = formatted.split('\n\n').map(p => {
-                p = p.trim();
-                if (!p) return '';
-                if (p.startsWith('<') && !p.startsWith('<li>')) return p;
-                return `<p style="margin: 0 0 12px 0; line-height: 1.7;">${p}</p>`;
-            }).join('');
-
             return formatted;
         }
 

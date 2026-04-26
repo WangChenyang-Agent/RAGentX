@@ -1,17 +1,18 @@
-【问题】= 和 := 的区别？
-
-【答案】
+Go 语言笔试面试题 (基础语法 ) 
+2020- 09-04 22:10:10 
+ 
+golang interview questions 
+Go 语言笔试面试题汇总 ，Github 
+Q1 = 和 := 的区别？ 
+答案 
 := 声明+赋值 
 = 仅赋值 
 var foo int 
 foo = 10 
 // 等价于 
-foo := 10
-
-
-【问题】指针的作用？
-
-【答案】
+foo := 10 
+Q2 指针的作用？ 
+答案 
 指针用来保存变量的地址。 
 例如 
 
@@ -19,12 +20,9 @@ var x = 5
 var p *int = &x 
 fmt.Printf( "x = %d" , *p) // x 可以用 *p 访问 
 • * 运算符，也称为解引用运算符，用于访问地址中的值。 
-• ＆运算符，也称为地址运算符，用于返回变量的地址。
-
-
-【问题】Go 允许多个返回值吗？
-
-【答案】
+• ＆运算符，也称为地址运算符，用于返回变量的地址。 
+Q3 Go 允许多个返回值吗？ 
+答案 
 允许 
 func swap(x, y string) (string, string) { 
  return y, x 
@@ -33,39 +31,21 @@ func swap(x, y string) (string, string) {
 func main() { 
  a, b := swap( "A", "B") 
  fmt.Println(a, b) // B A 
-}
-
-【标签】
-Golang
-
-
-【问题】Go 有异常类型吗？
-
-【答案】
+} 
+Q4 Go 有异常类型吗？ 
+答案 
 Go 没有异常类型，只有错误类型（Error），通常使用返回值来表示异常状态。 
 f, err := os.Open( "test.txt" ) 
 if err != nil { 
  log.Fatal(err) 
-}
-
-【标签】
-Golang
-
-
-【问题】什么是协程（ Goroutine ）
-
-【答案】
+} 
+Q5 什么是协程（ Goroutine ） 
+答案 
 Goroutine 是与其他函数或方法同时运行的函数或方法。 Goroutines 可以被认为是
 轻量级的线程。 与线程相比，创建 Goroutine 的开销很小。 Go 应用程序同时运行
-数千个 Goroutine 是非常常见的做法。
-
-【标签】
-Golang / 并发 / 基础
-
-
-【问题】如何高效地拼接字符串
-
-【答案】
+数千个 Goroutine 是非常常见的做法。 
+Q6 如何高效地拼接字符串 
+答案 
 Go 语言中，字符串是只读的，也就意味着每次修改操作都会创建一个新的字符串。
 如果需要拼接多次，应使用 strings.Builder ，最小化内存拷贝次数。 
 var str strings.Builder 
@@ -73,15 +53,9 @@ for i := 0; i < 1000; i++ {
  str.WriteString( "a") 
 
 } 
-fmt.Println(str.String())
-
-【标签】
-基础
-
-
-【问题】什么是 rune 类型
-
-【答案】
+fmt.Println(str.String()) 
+Q7 什么是 rune 类型 
+答案 
 ASCII 码只需要 7 bit 就可以完整地表示，但只能表示英文字母在内的 128个字符，
 为了表示世界上大部分的文字系统，发明了 Unicode， 它是 ASCII的超集，包含世
 界上书写系统中存在的所有字符，并为每个代码分配一个标准编号（称为 Unicode 
@@ -90,37 +64,19 @@ Go 语言中，字符串的底层表示是 byte (8 bit) 序列，而非 rune (32
 下面的例子中 语 和 言 使用 UTF -8 编码后各占 3 个 byte ，因此 len("Go 语言") 等于 
 8，当然我们也可以将字符串转换为 rune 序列。 
 fmt.Println( len("Go语言")) // 8 
-fmt.Println( len([]rune("Go语言"))) // 4
-
-【标签】
-基础
-
-
-【问题】如何判断 map 中是否包含某个 key ？
-
-【答案】
+fmt.Println( len([]rune("Go语言"))) // 4 
+Q8 如何判断 map 中是否包含某个 key ？ 
+答案 
 if val, ok := dict[ "foo"]; ok { 
  //do something here 
 } 
 dict["foo"] 有 2 个返回值，val 和 ok ，如果 ok 等于 true，则说明 dict 包含 key 
-"foo"，val 将被赋予 "foo" 对应的值。
-
-【标签】
-基础
-
-
-【问题】Go 支持默认参数或可选参数吗？
-
-【答案】
-Go 语言不支持可选参数（python 支持），也不支持方法重载（java 支持）。
-
-【标签】
-Golang
-
-
-【问题】defer 的执行顺序
-
-【答案】
+"foo"，val 将被赋予 "foo" 对应的值。 
+Q9 Go 支持默认参数或可选参数吗？ 
+答案 
+Go 语言不支持可选参数（python 支持），也不支持方法重载（java 支持）。 
+Q10 defer 的执行顺序 
+答案 
 • 多个 defer 语句，遵从后进先出(Last In First Out，LIFO) 的原则，最后声明的 
 defer 语句，最先得到执行。 
 • defer 在 return 语句之后执行，但在函数退出之前，defer 可以修改返回值。 
@@ -163,23 +119,15 @@ func main() {
 // defer2 
 // return 1 
 这个例子中，返回值被修改了。对于有名返回值的函数，执行 return 语句时，并
-不会再创建临时变量保存，因此，defer 语句修改了 i ，即对返回值产生了影响。
-
-
-【问题】如何交换 2 个变量的值？
-
-【答案】
+不会再创建临时变量保存，因此，defer 语句修改了 i ，即对返回值产生了影响。 
+Q11 如何交换 2 个变量的值？ 
+答案 
 a, b := "A", "B" 
 a, b = b, a 
-fmt.Println(a, b) // B A
+fmt.Println(a, b) // B A 
+Q12 Go 语言 tag 的用处？ 
+答案 
 
-【标签】
-基础
-
-
-【问题】Go 语言 tag 的用处？
-
-【答案】
 tag 可以理解为 struct 字段的注解，可以用来定义字段的一个或多个属性。框架/工
 具可以通过反射获取到某个字段定义的属性，采取相应的处理方式。tag 丰富了代
 码的语义，增强了灵活性。 
@@ -201,15 +149,9 @@ func main() {
 } 
 这个例子使用 tag 定义了结构体字段与 json 字段的转换关系，Name - > stu_name , 
 ID -> stu_id，忽略 Age 字段。很方便地实现了 Go 结构体与不同规范的 json 文本
-之间的转换。
-
-【标签】
-Golang
-
-
-【问题】如何判断 2 个字符串切片（ slice) 是相等的？
-
-【答案】
+之间的转换。 
+Q13 如何判断 2 个字符串切片（ slice) 是相等的？ 
+答案 
 go 语言中可以使用反射 reflect.DeepEqual(a, b) 判断 a、b 两个切片是否相等，
 但是通常不推荐这么做，使用反射非常影响性能。 
 通常采用的方式如下，遍历比较切片中的每一个元素（注意处理越界的情况）。 
@@ -231,15 +173,9 @@ func StringSliceEqualBCE(a, b [] string) bool {
  } 
  
  return true 
-}
-
-【标签】
-基础
-
-
-【问题】字符串打印时， %v 和 %+v 的区别
-
-【答案】
+} 
+Q14 字符串打印时， %v 和 %+v 的区别 
+答案 
 %v 和 %+v 都可以用来打印 struct 的值，区别在于 %v 仅打印各个字段的值， %+v 还
 会打印各个字段的名称。 
 type Stu struct { 
@@ -250,12 +186,9 @@ func main() {
  fmt.Printf( "%v\n", Stu{"Tom"}) // {Tom} 
  fmt.Printf( "%+v\n", Stu{"Tom"}) // {Name:Tom} 
 } 
-但如果结构体定义了 String() 方法，%v 和 %+v 都会调用 String() 覆盖默认值。
-
-
-【问题】Go 语言中如何表示枚举值 (enums)
-
-【答案】
+但如果结构体定义了 String() 方法，%v 和 %+v 都会调用 String() 覆盖默认值。 
+Q15 Go 语言中如何表示枚举值 (enums) 
+答案 
 通常使用常量(const) 来表示枚举值。 
 type StuType int32 
  
@@ -269,15 +202,9 @@ const (
 func main() { 
  fmt.Println(Type1, Type2, Type3, Type4) // 0, 1, 2, 3 
 } 
-参考 What is an idiomatic way of representing enums in Go? - StackOverflow
-
-【标签】
-Golang / 基础
-
-
-【问题】空 struct{} 的用途
-
-【答案】
+参考 What is an idiomatic way of representing enums in Go? - StackOverflow 
+Q16 空 struct{} 的用途 
+答案 
 使用空结构体 struct{} 可以节省内存，一般作为占位符使用，表明这里并不需要一
 个值。 
 
@@ -319,4 +246,3 @@ func (l Lamp) On() {
 func (l Lamp) Off() { 
  println("Off") 
 }
-

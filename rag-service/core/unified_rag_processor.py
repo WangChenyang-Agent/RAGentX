@@ -14,6 +14,7 @@ from langchain_community.retrievers import BM25Retriever
 
 from core.embedding import EmbeddingService
 from core.generator import Generator
+from core.reranker import Reranker
 from cache.redis_cache import (
     get_redis_client,
     generate_cache_key,
@@ -22,16 +23,8 @@ from cache.redis_cache import (
     is_redis_available
 )
 
-try:
-    from marker.converters.pdf import PdfConverter
-    from marker.models import create_model_dict
-    from marker.output import text_from_rendered
-    MARKER_AVAILABLE = True
-except ImportError:
-    print("Marker not available, will use fallback method")
-    MARKER_AVAILABLE = False
-
-# 强制禁用Marker，使用PyPDF2（避免下载大模型和权限问题）
+# 只使用PyPDF2进行PDF解析
+MARKER_AVAILABLE = False
 FORCE_DISABLE_MARKER = True
 
 try:
@@ -42,17 +35,15 @@ except ImportError:
     RAG_ANYTHING_AVAILABLE = False
 
 project_root = os.path.dirname(os.path.abspath(__file__))
-cache_dir = os.path.join(project_root, ".marker_cache")
+cache_dir = os.path.join(project_root, ".cache")
 os.makedirs(cache_dir, exist_ok=True)
 
-os.environ["XDG_CACHE_HOME"] = cache_dir
-os.environ["MARKER_CACHE_HOME"] = cache_dir
 os.environ["HF_HOME"] = cache_dir
 os.environ["TORCH_HOME"] = cache_dir
 
 
 class UnifiedRAGProcessor:
-    """统一的RAG处理器：LangChain + Marker + 部分RAG-Anything"""
+    """统一的RAG处理器：LangChain + 部分RAG-Anything"""
 
     def __init__(
         self,
@@ -79,47 +70,15 @@ class UnifiedRAGProcessor:
 
         self.embedding_service = EmbeddingService()
         self.generator = Generator()
+        self.reranker = Reranker()
 
         self.vectorstore = None
         self.chunks = []
         self.markdown_files = []
 
-        self.marker_models = None
-        self.marker_converter = None
-        self._marker_initialized = False
-
-        # 不再这里初始化Marker，改为延迟加载
-        # self._initialize_marker()
         self._load_existing_index()
 
-    def _ensure_marker_initialized(self):
-        """延迟初始化Marker模型"""
-        if self._marker_initialized:
-            return
 
-        if FORCE_DISABLE_MARKER:
-            print("Marker is disabled by configuration, using PyPDF2 fallback")
-            self._marker_initialized = True
-            return
-
-        if not MARKER_AVAILABLE:
-            print("Marker package not installed")
-            self._marker_initialized = True
-            return
-
-        if self.marker_models is None:
-            print("Initializing Marker models (lazy)...")
-            try:
-                self.marker_models = create_model_dict()
-                self.marker_converter = PdfConverter(artifact_dict=self.marker_models)
-                print("Marker models initialized successfully!")
-            except Exception as e:
-                print(f"Failed to initialize Marker models: {e}")
-                print("Will use fallback PDF processing")
-                self.marker_models = None
-                self.marker_converter = None
-
-        self._marker_initialized = True
 
     def _convert_pdf_to_markdown_fallback(self, pdf_path: str) -> str:
         """使用PyPDF2的备用转换方法"""
@@ -396,26 +355,8 @@ class UnifiedRAGProcessor:
     def _convert_pdf_to_markdown(self, pdf_path: str) -> str:
         """将PDF转换为Markdown"""
         print(f"Converting PDF to Markdown: {pdf_path}")
-
-        self._ensure_marker_initialized()
-
-        if self.marker_converter is None:
-            print("Marker not available, using fallback method...")
-            return self._convert_pdf_to_markdown_fallback(pdf_path)
-
-        try:
-            rendered = self.marker_converter(pdf_path)
-            markdown_text = text_from_rendered(rendered)
-            
-            # 增强Markdown结构化
-            markdown_text = self._enhance_markdown_structure(markdown_text)
-            return markdown_text
-
-        except Exception as e:
-            print(f"Marker conversion failed: {e}")
-            print("Falling back to basic text extraction...")
-            # 备用方法已经处理了结构化
-            return self._convert_pdf_to_markdown_fallback(pdf_path)
+        # 直接使用PyPDF2进行PDF解析
+        return self._convert_pdf_to_markdown_fallback(pdf_path)
 
     def _save_markdown(self, markdown_text: str, output_filename: str) -> str:
         """保存Markdown文件"""
@@ -452,7 +393,11 @@ class UnifiedRAGProcessor:
                     
                     # 清理问题和答案
                     if question.startswith('Q'):
-                        question = question
+                        # 提取问题内容（从answer中）
+                        q_match = re.search(r'(.+?)[\n\r]', answer)
+                        if q_match:
+                            question = q_match.group(1).strip()
+                            answer = answer[q_match.end():].strip()
                     elif question == '【问题】':
                         # 提取问题内容
                         q_match = re.search(r'(.+?)[\n\r]', answer)
@@ -568,7 +513,10 @@ class UnifiedRAGProcessor:
                         "topic": topic,
                         "tags": tag_list,
                         "question": question,
-                        "chunk_level": "main"
+                        "chunk_level": "main",
+                        "title_path": [topic],  # 使用主题作为标题路径
+                        "section_type": "qa_pair",
+                        "keywords": tag_list + [topic]  # 添加关键词
                     }
                     
                     # 添加主QA块（完整的Q&A）
@@ -583,7 +531,10 @@ class UnifiedRAGProcessor:
                             "topic": topic,
                             "tags": tag_list,
                             "question": question,
-                            "chunk_level": "sub"
+                            "chunk_level": "sub",
+                            "title_path": [topic, "Answer"],  # 标题路径包含答案
+                            "section_type": "explanation",
+                            "keywords": tag_list + [topic]  # 添加关键词
                         }
                         
                         # 按语义分割answer
@@ -592,41 +543,16 @@ class UnifiedRAGProcessor:
                         # 添加子chunk
                         for j, sub_chunk in enumerate(answer_chunks):
                             if self._is_valuable_chunk(sub_chunk):
-                                chunks.append(Document(page_content=sub_chunk, metadata=sub_metadata))
+                                # 为子chunk添加chunk_index
+                                sub_metadata_with_index = sub_metadata.copy()
+                                sub_metadata_with_index["chunk_index"] = j
+                                chunks.append(Document(page_content=sub_chunk, metadata=sub_metadata_with_index))
         else:
-            # 没有Q&A格式，使用传统分割
-            print("No Q&A blocks found, using semantic splitting...")
+            # 没有Q&A格式，使用标题驱动的层级切分
+            print("No Q&A blocks found, using hierarchical splitting...")
             
-            # 提取主题
-            topic = self._extract_topic(processed_text[:500])  # 从文本开头提取主题
-            
-            # 构建metadata
-            metadata = {
-                "source": source,
-                "type": "general",
-                "topic": topic,
-                "tags": [],
-                "chunk_level": "main"
-            }
-            
-            # 使用语义分割，确保完整性
-            text_splitter = RecursiveCharacterTextSplitter(
-                chunk_size=500,  # 适中的分块大小，符合用户建议
-                chunk_overlap=100,  # 合适的重叠比例，避免信息断裂
-                separators=[
-                    "\n\n",      # 按段落分割
-                    "\n",        # 按行分割
-                    "。",        # 按中文句号分割
-                    ". ",        # 按英文句号分割
-                    "；",        # 按中文分号分割
-                    ";",         # 按英文分号分割
-                    "，",        # 按中文逗号分割
-                    ", ",        # 按英文逗号分割
-                    ""           # 最后按字符分割
-                ]
-            )
-            base_doc = Document(page_content=processed_text, metadata=metadata)
-            chunks = text_splitter.split_documents([base_doc])
+            # 使用标题驱动的层级切分
+            chunks = self._create_hierarchical_chunks(processed_text, source)
 
         # 过滤并后处理块
         filtered_chunks = []
@@ -699,6 +625,213 @@ class UnifiedRAGProcessor:
         
         return final_chunks
     
+    def _parse_markdown_hierarchy(self, markdown_text: str) -> List[Dict]:
+        """解析Markdown标题，构建层级树"""
+        import re
+        
+        lines = markdown_text.split('\n')
+        hierarchy = []
+        current_path = []
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            
+            # 匹配Markdown标题
+            title_match = re.match(r'^(#{1,6})\s+(.*)$', line)
+            if title_match:
+                level = len(title_match.group(1))
+                title = title_match.group(2).strip()
+                
+                # 更新当前路径
+                current_path = current_path[:level-1] + [title]
+                
+                hierarchy.append({
+                    'type': 'heading',
+                    'level': level,
+                    'content': title,
+                    'path': current_path.copy(),
+                    'start_line': len(hierarchy)
+                })
+            else:
+                # 普通内容
+                hierarchy.append({
+                    'type': 'content',
+                    'content': line,
+                    'path': current_path.copy(),
+                    'start_line': len(hierarchy)
+                })
+        
+        return hierarchy
+    
+    def _get_dynamic_chunk_size(self, content: str, content_type: str) -> int:
+        """根据内容类型返回动态chunk size"""
+        # 内容类型到chunk size的映射
+        chunk_sizes = {
+            'heading': 200,      # 标题块
+            'paragraph': 500,     # 普通段落
+            'explanation': 800,   # 长解释
+            'code': -1,           # 代码块不切分
+            'qa': 1000,           # Q&A块
+            'list': 400           # 列表
+        }
+        
+        # 默认为普通段落
+        default_size = chunk_sizes['paragraph']
+        
+        # 根据内容类型返回对应的chunk size
+        if content_type in chunk_sizes:
+            return chunk_sizes[content_type]
+        
+        # 根据内容特征判断类型
+        import re
+        
+        # 检查是否为代码块
+        if '```' in content:
+            return chunk_sizes['code']
+        
+        # 检查是否为列表
+        if re.search(r'^\s*[•●○▸▹▶-]\s', content, re.MULTILINE):
+            return chunk_sizes['list']
+        
+        # 根据内容长度调整
+        if len(content) > 1500:
+            return chunk_sizes['explanation']
+        elif len(content) < 300:
+            return chunk_sizes['paragraph']
+        
+        return default_size
+    
+    def _split_with_dynamic_size(self, content: str, content_type: str) -> List[str]:
+        """根据动态chunk size分割内容"""
+        chunk_size = self._get_dynamic_chunk_size(content, content_type)
+        
+        # 代码块不切分
+        if chunk_size == -1:
+            return [content]
+        
+        # 使用递归字符分割器
+        from langchain_text_splitters import RecursiveCharacterTextSplitter
+        
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=chunk_size,
+            chunk_overlap=int(chunk_size * 0.2),  # 20%重叠
+            separators=[
+                "\n\n",      # 按段落分割
+                "\n",        # 按行分割
+                "。",        # 按中文句号分割
+                ". ",        # 按英文句号分割
+                "；",        # 按中文分号分割
+                ";",         # 按英文分号分割
+                "，",        # 按中文逗号分割
+                ", ",        # 按英文逗号分割
+                ""           # 最后按字符分割
+            ]
+        )
+        
+        return text_splitter.split_text(content)
+    
+    def _create_hierarchical_chunks(self, markdown_text: str, source: str = "") -> List[Document]:
+        """基于标题层级创建分块"""
+        import re
+        
+        # 解析Markdown层级
+        hierarchy = self._parse_markdown_hierarchy(markdown_text)
+        
+        chunks = []
+        current_section = {
+            'path': [],
+            'content': [],
+            'level': 0
+        }
+        
+        for item in hierarchy:
+            if item['type'] == 'heading':
+                # 保存当前section
+                if current_section['content']:
+                    content = '\n'.join(current_section['content']).strip()
+                    if content:
+                        # 确定内容类型
+                        content_type = 'explanation'
+                        if re.search(r'^\s*[•●○▸▹▶-]\s', content, re.MULTILINE):
+                            content_type = 'list'
+                        elif '```' in content:
+                            content_type = 'code'
+                        
+                        # 动态分割内容
+                        content_chunks = self._split_with_dynamic_size(content, content_type)
+                        
+                        # 为每个分割后的块创建Document
+                        for i, chunk_content in enumerate(content_chunks):
+                            if chunk_content.strip():
+                                # 构建metadata
+                                metadata = {
+                                    "source": source,
+                                    "type": "section",
+                                    "topic": current_section['path'][-1] if current_section['path'] else self._extract_topic(chunk_content[:200]),
+                                    "tags": [],
+                                    "chunk_level": f"h{current_section['level']}" if current_section['level'] > 0 else "main",
+                                    "title_path": current_section['path'],
+                                    "section_type": content_type,
+                                    "chunk_index": i
+                                }
+                                
+                                # 生成带路径上下文的内容
+                                path_context = " > ".join(current_section['path'])
+                                full_content = f"{path_context}\n{chunk_content}" if path_context else chunk_content
+                                
+                                # 添加chunk
+                                chunks.append(Document(page_content=full_content, metadata=metadata))
+                
+                # 开始新section
+                current_section = {
+                    'path': item['path'],
+                    'content': [],
+                    'level': item['level']
+                }
+            else:
+                # 添加内容到当前section
+                current_section['content'].append(item['content'])
+        
+        # 保存最后一个section
+        if current_section['content']:
+            content = '\n'.join(current_section['content']).strip()
+            if content:
+                # 确定内容类型
+                content_type = 'explanation'
+                if re.search(r'^\s*[•●○▸▹▶-]\s', content, re.MULTILINE):
+                    content_type = 'list'
+                elif '```' in content:
+                    content_type = 'code'
+                
+                # 动态分割内容
+                content_chunks = self._split_with_dynamic_size(content, content_type)
+                
+                # 为每个分割后的块创建Document
+                for i, chunk_content in enumerate(content_chunks):
+                    if chunk_content.strip():
+                        # 构建metadata
+                        metadata = {
+                            "source": source,
+                            "type": "section",
+                            "topic": current_section['path'][-1] if current_section['path'] else self._extract_topic(chunk_content[:200]),
+                            "tags": [],
+                            "chunk_level": f"h{current_section['level']}" if current_section['level'] > 0 else "main",
+                            "title_path": current_section['path'],
+                            "section_type": content_type,
+                            "chunk_index": i
+                        }
+                        
+                        # 生成带路径上下文的内容
+                        path_context = " > ".join(current_section['path'])
+                        full_content = f"{path_context}\n{chunk_content}" if path_context else chunk_content
+                        
+                        # 添加chunk
+                        chunks.append(Document(page_content=full_content, metadata=metadata))
+        
+        return chunks
+    
     def _split_large_chunk(self, text: str) -> List[str]:
         """分割大块文本"""
         import re
@@ -742,13 +875,68 @@ class UnifiedRAGProcessor:
         
         # 模式1: Q1: 问题内容 或 Q1 问题内容
         # 注意：确保不会破坏代码块，使用更精确的匹配
-        text = re.sub(r'(Q\d+)([：:]?)(\s*)(.+?)(?=Q\d+|$)', r'【问题】\4\n【答案】\n', text, flags=re.DOTALL)
+        # 先识别所有Q模式，然后逐个处理
+        q_patterns = re.findall(r'Q\d+', text)
+        if q_patterns:
+            # 按顺序处理每个Q模式
+            processed_text = ''
+            last_pos = 0
+            for i, q_pattern in enumerate(q_patterns):
+                # 找到当前Q模式的位置
+                match = re.search(re.escape(q_pattern), text[last_pos:])
+                if match:
+                    start_pos = last_pos + match.start()
+                    # 找到下一个Q模式的位置或文本结束
+                    if i < len(q_patterns) - 1:
+                        next_q = q_patterns[i+1]
+                        next_match = re.search(re.escape(next_q), text[start_pos:])
+                        if next_match:
+                            end_pos = start_pos + next_match.start()
+                        else:
+                            end_pos = len(text)
+                    else:
+                        end_pos = len(text)
+                    
+                    # 提取问题和答案部分
+                    qa_text = text[start_pos:end_pos].strip()
+                    # 提取问题内容（去掉Q1: 部分）
+                    question_match = re.search(r'Q\d+[：:]?\s*(.+)', qa_text, re.DOTALL)
+                    if question_match:
+                        question = question_match.group(1).strip()
+                        # 提取答案部分（从答案标记开始）
+                        answer_match = re.search(r'答案[：:]?\s*(.+)$', question, re.DOTALL)
+                        if answer_match:
+                            answer = answer_match.group(1).strip()
+                            question = question[:answer_match.start()].strip()
+                            processed_text += f"【问题】{question}\n【答案】\n{answer}\n"
+                        else:
+                            processed_text += f"【问题】{question}\n【答案】\n"
+                    last_pos = end_pos
+            # 处理剩余部分
+            if last_pos < len(text):
+                processed_text += text[last_pos:]
+            text = processed_text
         
         # 模式2: 问题：内容
         text = re.sub(r'问题[：:](\s*)([^\n]+)\n', r'【问题】\2\n【答案】\n', text)
         
         # 模式3: 问：内容
         text = re.sub(r'问[：:](\s*)([^\n]+)\n', r'【问题】\2\n【答案】\n', text)
+        
+        # 模式4: 题目：内容
+        text = re.sub(r'题目[：:](\s*)([^\n]+)\n', r'【问题】\2\n【答案】\n', text)
+        
+        # 模式5: 问答对格式 (Q: ... A: ...)
+        text = re.sub(r'Q[：:](\s*)([^\n]+)\nA[：:](\s*)(.+?)(?=Q[：:]|$)', r'【问题】\2\n【答案】\3\n', text, flags=re.DOTALL)
+        
+        # 3. 确保每个Q&A块都有完整的结构
+        # 检查是否有未配对的【问题】
+        question_matches = re.findall(r'【问题】', text)
+        answer_matches = re.findall(r'【答案】', text)
+        
+        if len(question_matches) > len(answer_matches):
+            # 为最后一个问题添加答案标记
+            text = re.sub(r'【问题】([^【]+)$', r'【问题】\1\n【答案】\n', text, flags=re.DOTALL)
         
         # 3. 处理答案标记
         text = re.sub(r'答案[：:](\s*)', r'【答案】\n', text)
@@ -759,73 +947,10 @@ class UnifiedRAGProcessor:
         text = re.sub(r'标签[：:](\s*)(.+)', r'【标签】\2', text)
         text = re.sub(r'分类[：:](\s*)(.+)', r'【标签】\2', text)
         
-        # 5. 识别并处理缩进的代码块
-        # 暂时注释掉这部分逻辑，以提高性能
-        # lines = text.split('\n')
-        # processed_lines = []
-        # in_code_block = False
-        # 
-        # for line in lines:
-        #     # 检查是否是代码行（以空格或制表符开头，且包含代码特征）
-        #     stripped_line = line.strip()
-        #     is_code_line = False
-        #     
-        #     # 代码特征：包含关键字、符号或函数定义
-        #     code_patterns = [
-        #         r'^func\s+',  # 函数定义
-        #         r'^var\s+',   # 变量定义
-        #         r'^type\s+',  # 类型定义
-        #         r'^import\s+', # 导入语句
-        #         r'^for\s+',   # for循环
-        #         r'^if\s+',    # if语句
-        #         r'^else',     # else语句
-        #         r'^return\s+', # return语句
-        #         r'^case\s+',  # case语句
-        #         r'^default:',  # default语句
-        #         r'[{};]\s*$',  # 包含大括号或分号
-        #         r'\s*=\s*',    # 赋值语句
-        #         r'\s*\+\+|\s*--', # 自增自减
-        #         r'\s*\+|-|\*|/|%|\^|&|\||<<|>>', # 运算符
-        #         r'\s*\(|\)',   # 括号
-        #         r'\s*\[|\]',   # 方括号
-        #         r'\s*\.|->',   # 点或箭头操作符
-        #     ]
-        #     
-        #     # 检查是否是代码行
-        #     if stripped_line and (line.startswith(' ') or line.startswith('\t')):
-        #         for pattern in code_patterns:
-        #             if re.search(pattern, stripped_line):
-        #                 is_code_line = True
-        #                 break
-        #     
-        #     # 处理代码块
-        #     if is_code_line and not in_code_block:
-        #         # 开始代码块
-        #         processed_lines.append('```go')
-        #         processed_lines.append(line)
-        #         in_code_block = True
-        #     elif is_code_line and in_code_block:
-        #         # 代码块内的行
-        #         processed_lines.append(line)
-        #     elif not is_code_line and in_code_block:
-        #         # 结束代码块
-        #         processed_lines.append('```')
-        #         processed_lines.append(line)
-        #         in_code_block = False
-        #     else:
-        #         # 普通行
-        #         processed_lines.append(line)
-        # 
-        # # 确保代码块结束
-        # if in_code_block:
-        #     processed_lines.append('```')
-        # 
-        # text = '\n'.join(processed_lines)
-        
-        # 6. 确保每个Q&A块之间有清晰的分隔
+        # 5. 确保每个Q&A块之间有清晰的分隔
         text = re.sub(r'【问题】', r'\n【问题】', text)
         
-        # 7. 清理多余的空行
+        # 6. 清理多余的空行
         text = re.sub(r'\n{3,}', '\n\n', text)
         
         return text.strip()
@@ -1040,8 +1165,10 @@ class UnifiedRAGProcessor:
 
         print(f"\nRetrieving for query: {query}")
         
+        # 分层检索架构
+        print("\n=== 分层检索架构 ===")
+        
         # 关键词匹配增强 - 针对特定查询优化
-        query_lower = query.lower()
         keyword_boost = {}
         
         # 定义关键词到相关内容的映射
@@ -1078,6 +1205,7 @@ class UnifiedRAGProcessor:
         matched_keywords.extend([term for term in query_terms if len(term) > 1])
         
         # 2. 技术术语映射匹配
+        query_lower = query.lower()
         for keyword, related_terms in keyword_mappings.items():
             for term in related_terms:
                 if term.lower() in query_lower:
@@ -1097,6 +1225,34 @@ class UnifiedRAGProcessor:
         
         matched_keywords = list(set(matched_keywords))  # 去重
         print(f"Matched keywords: {matched_keywords}")
+        
+        # 1. 标题召回（粗）
+        print("\n1. 标题召回阶段...")
+        
+        # 提取所有标题路径
+        title_chunks = []
+        for chunk in self.chunks:
+            if hasattr(chunk, 'metadata') and 'title_path' in chunk.metadata:
+                title_path = chunk.metadata['title_path']
+                if title_path:
+                    title_str = " > ".join(title_path)
+                    title_chunks.append((title_str, chunk))
+        
+        # 标题相似度匹配
+        title_scores = []
+        for title_str, chunk in title_chunks:
+            # 简单的标题匹配分数
+            score = 0
+            for kw in matched_keywords:
+                if kw in title_str:
+                    score += 1
+            if score > 0:
+                title_scores.append((score, chunk))
+        
+        # 按标题分数排序
+        title_scores.sort(key=lambda x: x[0], reverse=True)
+        top_title_chunks = [chunk for _, chunk in title_scores[:top_k // 2]]
+        print(f"标题召回结果: {len(top_title_chunks)} 个相关章节")
 
         if mode == "vector" or mode == "hybrid":
             # 使用向量检索，获取更多结果
@@ -1107,7 +1263,7 @@ class UnifiedRAGProcessor:
             for i, (doc, score) in enumerate(docs_and_scores[:10]):
                 content = doc.page_content if hasattr(doc, 'page_content') else str(doc)
                 content = self._process_content(content)  # 处理字符编码
-                print(f"  {i+1}. Score: {score:.4f}, Content: {content[:50]}...")
+                print(f"  {i+1}. Score: {score:.4f}, Content: {content[:100]}...")
             
             # 合并并去重
             seen_content = set()
@@ -1123,6 +1279,8 @@ class UnifiedRAGProcessor:
                     has_keyword = any(kw.lower() in content.lower() for kw in matched_keywords) if matched_keywords else False
                     all_docs.append((doc, score, has_keyword))
             
+
+            
             # 优先返回包含关键词的文档
             keyword_docs = []
             other_docs = []
@@ -1135,8 +1293,21 @@ class UnifiedRAGProcessor:
                 if has_keyword:
                     # 对于定义类查询，优先返回包含定义的内容
                     if any(term in query for term in ['什么是', '定义', '概念', '含义']):
-                        # 优先匹配包含核心概念但不包含负面/问题场景的内容
-                        if '泄露' not in content_lower and not ( '问题' in content_lower and '场景' in content_lower):
+                        # 优先匹配包含核心概念的内容
+                        # 不要过滤掉与查询直接相关的负面/问题场景
+                        query_lower = query.lower()
+                        # 检查是否是查询的核心词汇
+                        is_core_term = any(term in query_lower for term in ['泄露', '死锁', '无限循环'])
+                        
+                        # 检查文档是否包含核心术语
+                        has_core_term = any(term in content_lower for term in ['泄露', '死锁', '无限循环'])
+                        
+                        # 对于核心术语查询，优先返回包含核心术语的文档
+                        if is_core_term or has_core_term:
+                            # 大幅降低得分，使其排前面（向量相似度得分越低越相似）
+                            adjusted_score = score * 0.001  # 进一步降低得分，确保排前面
+                            keyword_docs.append((doc, adjusted_score))
+                        else:
                             # 检查是否包含定义相关词汇
                             if any(def_term in content for def_term in ['是指', '定义', '概念', '含义', '解释', '是 ', '是与', '可以被认为', '可以被认为是', '可以认为', '是与其他', '是 与其他']) or '什么是' in content or '是' in content.split('\n')[0]:
                                 # 大幅降低得分，使其排前面（向量相似度得分越低越相似）
@@ -1146,8 +1317,6 @@ class UnifiedRAGProcessor:
                                 # 适度降低得分
                                 adjusted_score = score * 0.7
                                 keyword_docs.append((doc, adjusted_score))
-                        else:
-                            keyword_docs.append((doc, score))
                     else:
                         keyword_docs.append((doc, score))
                 else:
@@ -1202,7 +1371,10 @@ class UnifiedRAGProcessor:
                 content = doc.page_content if hasattr(doc, 'page_content') else str(doc)
                 print(f"  Other doc {i+1}. Score: {score:.4f}, Content: {content[:50]}...")
             
-            # 合并：关键词文档优先，然后按相似度排序
+            # 2. Chunk召回（细）
+            print("\n2. Chunk召回阶段...")
+            
+            # 合并：标题文档优先，然后是关键词文档，最后是其他相关文档
             # 对keyword_docs按得分排序（得分越低越相似）
             keyword_docs.sort(key=lambda x: x[1])
             # 对other_docs按得分排序
@@ -1212,7 +1384,15 @@ class UnifiedRAGProcessor:
             merged_docs = []
             seen_content = set()
             
-            # 优先添加关键词文档
+            # 优先添加标题召回的结果
+            for doc in top_title_chunks:
+                content = doc.page_content if hasattr(doc, 'page_content') else str(doc)
+                content_hash = hash(content[:200])
+                if content_hash not in seen_content and len(merged_docs) < top_k:
+                    seen_content.add(content_hash)
+                    merged_docs.append(doc)
+            
+            # 然后添加关键词文档
             for doc, score in keyword_docs:
                 content = doc.page_content if hasattr(doc, 'page_content') else str(doc)
                 content_hash = hash(content[:200])
@@ -1220,7 +1400,7 @@ class UnifiedRAGProcessor:
                     seen_content.add(content_hash)
                     merged_docs.append(doc)
             
-            # 然后添加其他相关文档
+            # 最后添加其他相关文档
             for doc, score in other_docs:
                 content = doc.page_content if hasattr(doc, 'page_content') else str(doc)
                 content_hash = hash(content[:200])
@@ -1229,7 +1409,14 @@ class UnifiedRAGProcessor:
                     merged_docs.append(doc)
             
             print(f"Final merged docs: {len(merged_docs)}")
-            return merged_docs
+            
+            # 3. Rerank阶段
+            print("\n3. Rerank阶段...")
+            print(f"Reranking {len(merged_docs)} documents...")
+            reranked_docs = self.reranker.rerank(query, merged_docs, top_n=top_k)
+            print(f"Reranked docs: {len(reranked_docs)}")
+            
+            return reranked_docs
 
         elif mode == "keyword":
             # 简单的关键词匹配检索
@@ -1250,6 +1437,12 @@ class UnifiedRAGProcessor:
             # 按分数排序
             scored_chunks.sort(key=lambda x: x[1], reverse=True)
             docs = [chunk for chunk, _ in scored_chunks[:top_k]]
+            
+            # 使用Reranker对结果进行重排序
+            print(f"Reranking {len(docs)} documents...")
+            reranked_docs = self.reranker.rerank(query, docs, top_n=top_k)
+            print(f"Reranked docs: {len(reranked_docs)}")
+            docs = reranked_docs
 
         results = []
         for doc in docs:
@@ -1300,6 +1493,12 @@ class UnifiedRAGProcessor:
                 "sources": []
             }
             return result
+
+        # 在构建context之前添加重排序
+        if hasattr(self, 'reranker'):
+            print(f"Reranking {len(retrieved_docs)} docs")
+            retrieved_docs = self.reranker.rerank(question, retrieved_docs, top_n=top_k)
+            print(f"Reranked to {len(retrieved_docs)} docs")
 
         # 构建context
         try:
@@ -1412,7 +1611,7 @@ class UnifiedRAGProcessor:
 async def main():
     """测试主函数"""
     print("=" * 60)
-    print("Unified RAG Processor: LangChain + Marker + RAG-Anything")
+    print("Unified RAG Processor: LangChain + RAG-Anything")
     print("=" * 60)
 
     processor = UnifiedRAGProcessor()

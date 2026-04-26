@@ -292,5 +292,5 @@ if __name__ == "__main__":
     print("=" * 60)
     print("Starting server on http://0.0.0.0:8000...")
     
-    # 使用uvicorn直接启动，使用正确的模块路径
-    uvicorn.run("api.main:app", host="0.0.0.0", port=8000, reload=True, cwd=os.path.dirname(os.path.dirname(__file__)))
+    # 使用uvicorn直接启动
+    uvicorn.run("api.main:app", host="0.0.0.0", port=8000, reload=True)
